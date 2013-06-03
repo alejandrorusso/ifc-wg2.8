@@ -163,3 +163,23 @@ withPC :: PC -> CPSS a -> CPSS a
 withPC l (MkCC c) = MkCC $ \pc -> \k -> c l k  
 
 tryCPS'' = contt (interCPS'' ex2 env1) 0 id 
+
+data Labeled l a = MkLabel l a
+     deriving Show
+
+data LIO l a where
+     Return  :: a -> LIO l a
+     Unlabel :: Labeled l a -> LIO l a 
+     Bind    :: LIO l a -> (a -> LIO l b) -> LIO l b 
+     
+
+lioCPS :: LIO l a -> CPSS a 
+lioCPS (Return x) = return x 
+
+lioCPS (Bind m f) = do x <- lioCPS m  
+                       lioCPS (f x)
+                       
+-- I cannot encode unlabel here. It needs to be part of the continuation.
+lioCPS (Unlabel (MkLabel l x)) = return x   
+                                      
+  
