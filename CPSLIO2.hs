@@ -1,7 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GADTs #-}
-
-module CPSLIO where
+module CPSLIO2 where
 
 import Data.Maybe 
 
@@ -101,9 +100,11 @@ data LIO a where
      Return  :: a -> LIO a
      Bind    :: LIO a -> (a -> LIO b) -> LIO b 
      Unlabel :: Labeled a -> LIO a 
+     Assign  :: Name -> b -> LIO ()
 
 
 lioCPS :: LIO a -> CPS r a 
+
 lioCPS (Return x) = return x 
 
 lioCPS (Bind m f) = do x <- lioCPS m  
@@ -111,3 +112,28 @@ lioCPS (Bind m f) = do x <- lioCPS m
                        
 lioCPS (Unlabel (MkLabel l x)) = MkCC $ \pc -> \k -> k (join pc l) x  
 
+
+--
+                                                     
+lioCPS2 :: Env -> LIO a -> CPS r a 
+
+lioCPS2 env (Return x) = return x
+
+lioCPS2 env (Bind m f) = do x <- lioCPS2 env m  
+                            lioCPS2 env (f x)
+                       
+lioCPS2 env (Unlabel (MkLabel l x)) = MkCC $ \pc -> \k -> k (join pc l) x  
+
+lioCPS2 env (Assign n v) = do pc <- currentPC 
+                              if (pc <= level (Var n) env) then return () -- Here, I don't do any effect since I don't model it
+                              else error "IFC error in assignment!"
+
+
+-- This example shows 3
+exLIO = Bind (Return 1) (\x -> Bind (Unlabel (MkLabel high 2)) (\y -> Return (x+y))) 
+
+-- This one should show an error!
+exLIO2 = Bind (Return 1) (\x -> Bind (Unlabel (MkLabel high 2)) (\y -> Bind (Assign 'l' 1) (\_ -> Return (x+y)))) 
+
+run_example2 :: LIO a -> a 
+run_example2 ex = contt (lioCPS2 env1 ex) 0 (\pc -> \x -> x) 
