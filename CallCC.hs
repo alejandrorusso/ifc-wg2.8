@@ -119,13 +119,11 @@ instance Monad (CPS r) where
 
 callCC :: ( (a -> CPS r b) -> CPS r a ) -> CPS r a 
 
-callCC f = MkC $ \c -> cont (f (\a -> MkC $ \_ -> c a)) c 
+callCC f = MkC $ \c -> cont (f (\a -> MkC $ \_ -> c a)) c  
 
 
 bar :: CPS r Int 
-bar = callCC $ ( \(k :: (Int -> CPS r b)) -> do let n = 5 
-                                                k n 
-                                                return 25 )
+bar = callCC $ ( \(k :: (Int -> CPS r Int)) -> return 10)
                         
 bar' = bar >>= \x -> return $ x+1      
 t = cont bar' print 

@@ -62,7 +62,7 @@ instance Monad (CPS r) where
   return x = MkCC $ \pc -> \k -> k pc x   
   m >>= f  = MkCC $ \pc -> \k -> contt m pc (\pc' -> \a -> contt (f a) pc' k) 
 
-currentPC :: CPS r PC -- (PC -> a -> PC) -> PC 
+currentPC :: CPS r PC -- PC -> (PC -> a -> PC) -> PC 
 currentPC = MkCC $ \pc -> \k -> k pc pc 
                                 
 bracketPC :: PC -> CPS r a -> CPS r a 
@@ -137,3 +137,9 @@ exLIO2 = Bind (Return 1) (\x -> Bind (Unlabel (MkLabel high 2)) (\y -> Bind (Ass
 
 run_example2 :: LIO a -> a 
 run_example2 ex = contt (lioCPS2 env1 ex) 0 (\pc -> \x -> x) 
+
+-- callCC
+-- contt :: PC -> (PC -> a -> r) -> r 
+
+callCC :: ( (a -> CPS r b) -> CPS r a ) -> CPS r a 
+callCC f = MkCC $ \pc -> \k -> contt (f (\a -> MkCC $ \pc' -> \_ -> k pc' a)) pc k  
