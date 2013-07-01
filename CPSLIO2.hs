@@ -143,3 +143,21 @@ run_example2 ex = contt (lioCPS2 env1 ex) 0 (\pc -> \x -> x)
 
 callCC :: ( (a -> CPS r b) -> CPS r a ) -> CPS r a 
 callCC f = MkCC $ \pc -> \k -> contt (f (\a -> MkCC $ \pc' -> \_ -> k pc' a)) pc k  
+
+
+
+-- No calling k, not failing!
+try :: CPS r Integer 
+try = do callCC (\k -> do k 1
+                          lioCPS2 env1 exLIO)
+         lioCPS2 env1 (Assign 'l' 1)
+         return 0
+      
+-- No calling k, but falling since the current label is high
+try2 :: CPS r Integer 
+try2 = do callCC (\k -> lioCPS2 env1 exLIO)
+          lioCPS2 env1 (Assign 'l' 1)
+          return 0
+       
+
+           
