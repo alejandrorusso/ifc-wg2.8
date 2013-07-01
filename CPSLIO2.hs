@@ -140,7 +140,6 @@ run_example2 ex = contt (lioCPS2 env1 ex) 0 (\pc -> \x -> x)
 
 -- callCC
 -- contt :: PC -> (PC -> a -> r) -> r 
-
 callCC :: ( (a -> CPS r b) -> CPS r a ) -> CPS r a 
 callCC f = MkCC $ \pc -> \k -> contt (f (\a -> MkCC $ \pc' -> \_ -> k pc' a)) pc k  
 
@@ -161,3 +160,12 @@ try2 = do callCC (\k -> lioCPS2 env1 exLIO)
        
 
            
+-- reader :: pc -> ((a -> r) -> r)
+-- reader PC (CPS r a)
+
+-- LIO ~
+-- CPST (Reader PC) r a ~ (a -> Reader PC r) -> Reader PC r
+--                      ~ (a -> PC -> r) -> PC ->  r
+
+-- get, put
+-- newIOREf, readIORef, writeIORef
