@@ -158,8 +158,12 @@ try2 = do callCC (\k -> lioCPS2 env1 exLIO)
           lioCPS2 env1 (Assign 'l' 1)
           return 0
        
-
-           
+-------------------------------------
+-------------------------------------
+-- Discussion with Pablo (Opal Hotel)           
+-------------------------------------
+-------------------------------------
+          
 -- reader :: pc -> ((a -> r) -> r)
 -- reader PC (CPS r a)
 
@@ -171,3 +175,21 @@ try2 = do callCC (\k -> lioCPS2 env1 exLIO)
 -- newIOREf, readIORef, writeIORef
 
 -- Cont (Reader s) r a ~?~ Cont (State s) r a  
+
+
+-------------------------------------
+-------------------------------------
+-- Exceptions
+-------------------------------------
+-------------------------------------
+
+
+thrown :: e -> CPS r (Either a e) 
+thrown e = return (Right e) 
+
+catch :: CPS r (Either a e) -> (e -> CPS r (Either a e)) -> CPS r (Either a e)  
+catch m hd = callCC (\ok -> do err <- callCC (\notOk -> do result <- m   
+                                                           case result of 
+                                                                Left a -> ok (Left a) 
+                                                                Right e -> notOk e)
+                               hd err)
