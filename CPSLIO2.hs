@@ -169,3 +169,5 @@ try2 = do callCC (\k -> lioCPS2 env1 exLIO)
 
 -- get, put
 -- newIOREf, readIORef, writeIORef
+
+-- Cont (Reader s) r a ~?~ Cont (State s) r a  
