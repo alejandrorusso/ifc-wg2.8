@@ -187,6 +187,7 @@ try2 = do callCC (\k -> lioCPS2 env1 exLIO)
 thrown :: e -> CPS r (Either a e) 
 thrown e = return (Right e) 
 
+
 catch :: CPS r (Either a e) -> (e -> CPS r (Either a e)) -> CPS r (Either a e)  
 catch m hd = callCC (\ok -> do err <- callCC (\notOk -> do result <- m   
                                                            case result of 
