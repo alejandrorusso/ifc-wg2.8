@@ -63,18 +63,20 @@ putC :: (STEffect s :<: f) => s -> Free f ()
 putC s = inject (Put s (Pure ()))
 
 -- I expected that localC calls runAlg?
--- Ale: It does not compile to me.
--- localC :: Free (STEffect s) a -> Free (STEffect s) a
--- localC m = do s <- getC :: Free f s
---               x <- m
---               putC s
---               return x
-              
 -- It does not work, a pure description of local?
 -- localAle :: Run l f => (l -> l) -> 
 --                        Free f a -> 
 --                        Free f a
 -- localAle st m = Pure $ \pc ->  runIFC m (st pc)
+
+
+localC :: forall l a . Label l => IFC l a -> IFC l a
+localC m =
+  do (s :: l) <- getC
+     x <- m
+     putC s
+     return x
+
 
 class (Functor f) => Run pc f where
   runAlg :: f (pc -> Maybe (a, pc)) -> pc -> Maybe (a,pc)
@@ -162,15 +164,13 @@ dsSem (If e c1 c2) env = local (lub (level e env)) $
                 else dsSem c2 env
 -}
 
-lioSem :: Label l => LIO l a -> IFC l a 
+lioSem :: forall l a. Label l => LIO l a -> IFC l a 
 lioSem (Return x) = return x
 lioSem (Bind m f) = lioSem m >>= lioSem . f
 lioSem (Unlabel (MkLabel l x)) = taint l >> return x
 lioSem (Label l x) = guardC l >> return (MkLabel l x)
---lioSem (ToLbl l m) = localC $ do x <- lioSem m
---                                 lioSem (Label l x)
-                                 
-  
+lioSem (ToLbl l m) = localC $ do x <- lioSem m
+                                 lioSem (Label l x)         
 --lioCPS (Assign x v) = setEnv x v
 
 env1 :: [(Name, (Int, TP))]
