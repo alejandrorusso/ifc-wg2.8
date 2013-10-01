@@ -199,3 +199,13 @@ ex2 = If (Var 'h') (Assgn 'l' (Con 5))
       
 ex3 = Seq ex1 (Assgn 'l' (Con 1))
 -}
+
+
+-- Preguntas: Es LIO modelable como una free monad?
+--            Tratar de tener el funtor Local s (s -> a)  
+--            Propiedades: monotonia del pc (taint)            
+--             * no-write down: no side-effects below pc (guard)
+--             * pensar propiedad del local 
+--             * taint para current label is not the same 
+--               as for references. References do not do the 
+--               join.
