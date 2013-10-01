@@ -40,6 +40,9 @@ data STEffect s a where
   Get :: (s -> a) -> STEffect s a
   Put :: s -> a -> STEffect s a
   
+-- Perhaps, STEffects must be called Local since getC and putC 
+-- are only used there? I believe it is not convinient to have
+-- explicitly getC and putC, but rather local.
 instance Functor (STEffect s) where
   fmap f (Get g) = Get (f . g)
   fmap f (Put s m) = Put s (f m)
@@ -59,11 +62,19 @@ getC = inject (Get Pure)
 putC :: (STEffect s :<: f) => s -> Free f ()
 putC s = inject (Put s (Pure ()))
 
-localC :: Free (STEffect s) a -> Free (STEffect s) a
-localC m = do s <- getC :: Free f s
-              x <- m
-              putC s
-              return x
+-- I expected that localC calls runAlg?
+-- Ale: It does not compile to me.
+-- localC :: Free (STEffect s) a -> Free (STEffect s) a
+-- localC m = do s <- getC :: Free f s
+--               x <- m
+--               putC s
+--               return x
+              
+-- It does not work, a pure description of local?
+-- localAle :: Run l f => (l -> l) -> 
+--                        Free f a -> 
+--                        Free f a
+-- localAle st m = Pure $ \pc ->  runIFC m (st pc)
 
 class (Functor f) => Run pc f where
   runAlg :: f (pc -> Maybe (a, pc)) -> pc -> Maybe (a,pc)
@@ -156,8 +167,8 @@ lioSem (Return x) = return x
 lioSem (Bind m f) = lioSem m >>= lioSem . f
 lioSem (Unlabel (MkLabel l x)) = taint l >> return x
 lioSem (Label l x) = guardC l >> return (MkLabel l x)
-lioSem (ToLbl l m) = localC $ do x <- lioSem m
-                                 lioSem (Label l x)
+--lioSem (ToLbl l m) = localC $ do x <- lioSem m
+--                                 lioSem (Label l x)
                                  
   
 --lioCPS (Assign x v) = setEnv x v
