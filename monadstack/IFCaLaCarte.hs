@@ -24,8 +24,18 @@ instance Label l => Monoid l where
   mempty = bottom
   mappend = lub  
                        
+data Protect l a = Protect l a 
+
 data ReadEffect l a where 
   Taint :: l -> a -> ReadEffect l a
+  
+  
+data Local l a where
+  Local :: l -> a -> Local l a
+  
+
+instance Functor (Local l) where
+  fmap f (Local l a) = Local l (f a)
 
 instance Functor (ReadEffect l) where
   fmap f (Taint l a) = Taint l (f a)
@@ -36,17 +46,10 @@ data WriteEffect l a where
 instance Functor (WriteEffect l) where
   fmap f (Guard l a) = Guard l (f a)
 
-data STEffect s a where
-  Get :: (s -> a) -> STEffect s a
-  Put :: s -> a -> STEffect s a
+-- data STEffect s a where
+--   Get :: (s -> a) -> STEffect s a
+--   Put :: s -> a -> STEffect s a
   
--- Perhaps, STEffects must be called Local since getC and putC 
--- are only used there? I believe it is not convinient to have
--- explicitly getC and putC, but rather local.
-instance Functor (STEffect s) where
-  fmap f (Get g) = Get (f . g)
-  fmap f (Put s m) = Put s (f m)
-
 inject :: (g :<: f) => g (Free f a) -> Free f a
 inject = Impure . inj
 
@@ -56,26 +59,22 @@ taint l = inject (Taint l (Pure ()))
 guardC :: (WriteEffect l :<: f) => l -> Free f ()
 guardC l = inject (Guard l (Pure ()))
 
-getC :: (STEffect s :<: f) => Free f s
-getC = inject (Get Pure)
+localC :: (Local l :<: f) => l -> Free f a -> Free f a 
+localC l a = inject (Local l a)
 
-putC :: (STEffect s :<: f) => s -> Free f ()
-putC s = inject (Put s (Pure ()))
+-- getC :: (STEffect s :<: f) => Free f s
+-- getC = inject (Get Pure)
 
--- I expected that localC calls runAlg?
--- It does not work, a pure description of local?
--- localAle :: Run l f => (l -> l) -> 
---                        Free f a -> 
---                        Free f a
--- localAle st m = Pure $ \pc ->  runIFC m (st pc)
+-- putC :: (STEffect s :<: f) => s -> Free f ()
+-- putC s = inject (Put s (Pure ()))
 
 
-localC :: forall l a . Label l => IFC l a -> IFC l a
-localC m =
-  do (s :: l) <- getC
-     x <- m
-     putC s
-     return x
+-- localC :: forall l a . Label l => IFC l a -> IFC l a
+-- localC m =
+--   do (s :: l) <- getC
+--      x <- m
+--      putC s
+--      return x
 
 
 class (Functor f) => Run pc f where
@@ -88,18 +87,23 @@ instance Label l => Run l (WriteEffect l) where
   runAlg (Guard l f) pc | pc `lrt` l = f pc
                         | otherwise  = Nothing
 
-instance Label l => Run l (STEffect l) where
-  runAlg (Get f)   pc = f pc pc
-  runAlg (Put s f) pc = f s
+-- instance Label l => Run l (STEffect l) where
+--   runAlg (Get f)   pc = f pc pc
+--   runAlg (Put s f) pc = f s
               
 instance (Run pc f, Run pc g) => Run pc (f :+: g) where
   runAlg (Inl x) = runAlg x
   runAlg (Inr x) = runAlg x
-
+  
+-- Quite clear that we forget about the PC!
+instance  Label l => Run l (Local l) where
+  runAlg (Local l g) pc = do (a,_) <- g pc  
+                             return (a,pc)
+                             
 runIFC :: Run l f => Free f a -> l -> Maybe (a, l)
 runIFC = foldFree (\x pc -> Just (x,pc)) runAlg
 
-type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: STEffect l) a
+type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Local l) a
 
 data TP = L | H
         deriving (Eq, Ord, Show)
@@ -169,8 +173,12 @@ lioSem (Return x) = return x
 lioSem (Bind m f) = lioSem m >>= lioSem . f
 lioSem (Unlabel (MkLabel l x)) = taint l >> return x
 lioSem (Label l x) = guardC l >> return (MkLabel l x)
-lioSem (ToLbl l m) = localC $ do x <- lioSem m
-                                 lioSem (Label l x)         
+lioSem (ToLbl l m) = do x <- localC l (lioSem m)
+                        lioSem (Label l x)
+                        
+--lioSem (ToLbl l m) = localC $ do x <- lioSem m
+--                                  lioSem (Label l x)         
+
 --lioCPS (Assign x v) = setEnv x v
 
 env1 :: [(Name, (Int, TP))]
@@ -187,6 +195,16 @@ exLIO2 = do x <- return 1
             z <- Unlabel y
             return z
 
+-- This one works but I don't know why :)
+exTolbl1 = do n <- ToLbl L $ Unlabel (MkLabel H 2)
+              Label L 1
+              
+exTolbl2 = do n <- ToLbl L $ Unlabel (MkLabel L 2)
+              return n
+              
+exTolbl3 = do n <- ToLbl H $ Unlabel (MkLabel H 2)
+              Label L 1
+              
 runEx :: LIO TP a -> Maybe (a, TP)
 runEx m = runIFC (lioSem m) L
 
