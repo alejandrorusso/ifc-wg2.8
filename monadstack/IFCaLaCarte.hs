@@ -95,7 +95,7 @@ instance (Run pc f, Run pc g) => Run pc (f :+: g) where
   runAlg (Inl x) = runAlg x
   runAlg (Inr x) = runAlg x
   
--- Quite clear that we forget about the PC!
+-- Quite clear that we forget about the PC! However, it does not work with the examples.
 instance  Label l => Run l (Local l) where
   runAlg (Local l g) pc = do (a,_) <- g pc  
                              return (a,pc)
@@ -195,14 +195,13 @@ exLIO2 = do x <- return 1
             z <- Unlabel y
             return z
 
--- This one works but I don't know why :)
-exTolbl1 = do n <- ToLbl L $ Unlabel (MkLabel H 2)
+exTolbl1 = do ToLbl H $ Unlabel (MkLabel H 2)
               Label L 1
               
 exTolbl2 = do n <- ToLbl L $ Unlabel (MkLabel L 2)
               return n
               
-exTolbl3 = do n <- ToLbl H $ Unlabel (MkLabel H 2)
+exTolbl3 = do ToLbl H $ Unlabel (MkLabel H 2)
               Label L 1
               
 runEx :: LIO TP a -> Maybe (a, TP)
