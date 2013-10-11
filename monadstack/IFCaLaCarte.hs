@@ -6,12 +6,12 @@ module IFC where
 import Data.Maybe 
 
 import AlaCarte
-import Control.Monad.Free
-import Control.Monad.Reader
-import Control.Monad.Cont
+import Control.Monad.Free 
+--import Control.Monad.Reader
+import Control.Monad.Cont 
 import Control.Monad.Trans
-import Control.Monad.State
-import Control.Monad.Writer
+import Control.Monad.State 
+import Control.Monad.Writer   
 import Control.Arrow
 
 class Label l where
@@ -24,19 +24,13 @@ instance Label l => Monoid l where
   mempty = bottom
   mappend = lub  
                        
-data Protect l a = Protect l a 
+
+
+{-- Functors representing effects --}
 
 data ReadEffect l a where 
   Taint :: l -> a -> ReadEffect l a
   
-  
-data Local l a where
-  Local :: l -> a -> Local l a
-  
-
-instance Functor (Local l) where
-  fmap f (Local l a) = Local l (f a)
-
 instance Functor (ReadEffect l) where
   fmap f (Taint l a) = Taint l (f a)
 
@@ -46,9 +40,16 @@ data WriteEffect l a where
 instance Functor (WriteEffect l) where
   fmap f (Guard l a) = Guard l (f a)
 
--- data STEffect s a where
---   Get :: (s -> a) -> STEffect s a
---   Put :: s -> a -> STEffect s a
+data Env s a where
+  Get :: (s -> a) -> Env s a
+  Put :: s -> a -> Env s a
+  
+instance Functor (Env l) where  
+  fmap f (Get g) = Get (f . g)
+  fmap f (Put s a) = Put s (f a) 
+  
+
+{-- Data types à la carte --}
   
 inject :: (g :<: f) => g (Free f a) -> Free f a
 inject = Impure . inj
@@ -56,60 +57,53 @@ inject = Impure . inj
 taint :: (ReadEffect l :<: f) => l -> Free f ()
 taint l = inject (Taint l (Pure ()))
 
-guardC :: (WriteEffect l :<: f) => l -> Free f ()
-guardC l = inject (Guard l (Pure ()))
+guard :: (WriteEffect l :<: f) => l -> Free f ()
+guard l = inject (Guard l (Pure ()))
 
-localC :: (Local l :<: f) => l -> Free f a -> Free f a 
-localC l a = inject (Local l a)
+ask :: (Env s :<: f) => Free f s
+ask = inject (Get Pure)
 
--- getC :: (STEffect s :<: f) => Free f s
--- getC = inject (Get Pure)
+tell :: (Env s :<: f) => s -> Free f ()
+tell s = inject (Put s (Pure ()))
 
--- putC :: (STEffect s :<: f) => s -> Free f ()
--- putC s = inject (Put s (Pure ()))
+{-- IFC monad cares about writing and reading effects as well as 
+    scope, i.e, environments --}
+type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l) a
 
+{-- Definition of "local" --}
+local :: forall l a . Label l => IFC l a -> IFC l a
+local m =
+  do (s :: l) <- IFC.ask
+     x <- m
+     IFC.tell s
+     return x
 
--- localC :: forall l a . Label l => IFC l a -> IFC l a
--- localC m =
---   do (s :: l) <- getC
---      x <- m
---      putC s
---      return x
-
-
-class (Functor f) => Run pc f where
-  runAlg :: f (pc -> Maybe (a, pc)) -> pc -> Maybe (a,pc)
+{-- Execution algebra --}
+class (Functor f) => Run fl f where
+  runAlg :: f (fl -> Maybe (a, fl)) -> fl -> Maybe (a,fl)
 
 instance Label l => Run l (ReadEffect l) where
-  runAlg (Taint l f) pc = f (pc `lub` l)
+  runAlg (Taint l f) fl = f (fl `lub` l)
 
 instance Label l => Run l (WriteEffect l) where
-  runAlg (Guard l f) pc | pc `lrt` l = f pc
+  runAlg (Guard l f) fl | fl `lrt` l = f fl
                         | otherwise  = Nothing
 
--- instance Label l => Run l (STEffect l) where
---   runAlg (Get f)   pc = f pc pc
---   runAlg (Put s f) pc = f s
+instance Label l => Run l (Env l) where
+  runAlg (Get f)   fl = f fl fl
+  runAlg (Put s f) _  = f s
               
-instance (Run pc f, Run pc g) => Run pc (f :+: g) where
+instance (Run fl f, Run fl g) => Run fl (f :+: g) where
   runAlg (Inl x) = runAlg x
   runAlg (Inr x) = runAlg x
   
--- Quite clear that we forget about the PC! However, it does not work with the examples.
-instance  Label l => Run l (Local l) where
-  runAlg (Local l g) pc = do (a,_) <- g pc  
-                             return (a,pc)
-                             
 runIFC :: Run l f => Free f a -> l -> Maybe (a, l)
-runIFC = foldFree (\x pc -> Just (x,pc)) runAlg
+runIFC = foldFree (\x fl -> Just (x,fl)) runAlg
 
-type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Local l) a
 
+{-- Translations --}
 data TP = L | H
         deriving (Eq, Ord, Show)
-
-type Name = Char
-type Env l = [(Name, (Int, l))] 
 
 instance Label TP where
   bottom = L
@@ -119,9 +113,12 @@ instance Label TP where
   lrt H L = False
   lrt _ _ = True
 
+
+{-- Simplified LIO to IFC --}
 data Labeled l a = MkLabel l a
      deriving (Eq, Ord, Show)
 
+{- Simplified version of LIO -}
 data LIO l a where
      Return  :: a -> LIO l a
      Bind    :: LIO l a -> (a -> LIO l b) -> LIO l b 
@@ -133,7 +130,45 @@ instance Monad (LIO l) where
   return = Return
   (>>=) = Bind
 
+
+lioSem :: forall l a. Label l => LIO l a -> IFC l a 
+lioSem (Return x) = return x
+lioSem (Bind m f) = lioSem m >>= lioSem . f
+lioSem (Unlabel (MkLabel l x)) = taint l >> return x
+lioSem (Label l x) = IFC.guard l >> return (MkLabel l x)
+lioSem (ToLbl l m) = do x <- local (lioSem m)  -- I do not like this freedom!
+                        lioSem (Label l x)
+                        
+-- Examples
+env1 :: [(Char, (Int, TP))]
+env1 = [('h',(5,H)), ('l',(5,L))]  
+
+-- Floating label H, result 2
+exLIO  = do x <- Unlabel (MkLabel H 2)
+            return x
+           
+-- Fail!
+exLIO2 = do x <- Unlabel (MkLabel H 2)
+            Label L x 
+
+exLIO3 = do x <- return 1
+            y <- ToLbl H $ do v <- Unlabel (MkLabel H 2)
+                              return (v+x)
+            z <- Unlabel y
+            return z
+
+exLIO4 = do ToLbl H $ Unlabel (MkLabel H 2)
+            Label L 1
+              
+              
+runEx :: LIO TP a -> Maybe (a, TP)
+runEx m = runIFC (lioSem m) L
+
+
 {-
+type Name = Char
+type Env l = [(Name, (Int, l))] 
+
 data Exp where 
      Con :: Int -> Exp 
      Add :: Exp -> Exp -> Exp 
@@ -168,44 +203,8 @@ dsSem (If e c1 c2) env = local (lub (level e env)) $
                 else dsSem c2 env
 -}
 
-lioSem :: forall l a. Label l => LIO l a -> IFC l a 
-lioSem (Return x) = return x
-lioSem (Bind m f) = lioSem m >>= lioSem . f
-lioSem (Unlabel (MkLabel l x)) = taint l >> return x
-lioSem (Label l x) = guardC l >> return (MkLabel l x)
-lioSem (ToLbl l m) = do x <- localC l (lioSem m)
-                        lioSem (Label l x)
-                        
---lioSem (ToLbl l m) = localC $ do x <- lioSem m
---                                  lioSem (Label l x)         
-
 --lioCPS (Assign x v) = setEnv x v
 
-env1 :: [(Name, (Int, TP))]
-env1 = [('h',(5,H)), ('l',(5,L))]  
-
--- This example shows 3
-exLIO = do x <- return 1
-           y <- Unlabel (MkLabel H 2)
-           return (x+y)
-
-exLIO2 = do x <- return 1
-            y <- ToLbl H $ do v <- Unlabel (MkLabel H 2)
-                              return (v+x)
-            z <- Unlabel y
-            return z
-
-exTolbl1 = do ToLbl H $ Unlabel (MkLabel H 2)
-              Label L 1
-              
-exTolbl2 = do n <- ToLbl L $ Unlabel (MkLabel L 2)
-              return n
-              
-exTolbl3 = do ToLbl H $ Unlabel (MkLabel H 2)
-              Label L 1
-              
-runEx :: LIO TP a -> Maybe (a, TP)
-runEx m = runIFC (lioSem m) L
 
 {-
 ex1 = If (Var 'h') (Assgn 'h' (Con 5))
