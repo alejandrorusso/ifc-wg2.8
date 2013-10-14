@@ -25,6 +25,15 @@ instance Label l => Monoid l where
   mappend = lub  
                        
 
+{- Addition of labeled objects: TODO 
+data LObj l o = LObj { object :: o, 
+                       label :: l }
+
+class Bless o m where 
+  blessR :: (o -> m a) -> LObj l o -> IFC l a 
+  blessW :: (o -> m a) -> LObj l o -> IFC l a 
+  bless ::  (o -> m a) -> LObj l o -> IFC l a 
+-}
 
 {-- Functors representing effects --}
 
@@ -63,20 +72,20 @@ guard l = inject (Guard l (Pure ()))
 ask :: (Env s :<: f) => Free f s
 ask = inject (Get Pure)
 
-tell :: (Env s :<: f) => s -> Free f ()
-tell s = inject (Put s (Pure ()))
+put :: (Env s :<: f) => s -> Free f ()
+put s = inject (Put s (Pure ()))
 
 {-- IFC monad cares about writing and reading effects as well as 
     scope, i.e, environments --}
 type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l) a
 
-{-- Definition of "local" --}
-local :: forall l a . Label l => IFC l a -> IFC l a
+-- {-- Definition of "local" --}
+local :: forall l a . Label l => IFC l () -> IFC l ()
 local m =
   do (s :: l) <- IFC.ask
      x <- m
-     IFC.tell s
-     return x
+     IFC.put s
+     return ()
 
 {-- Execution algebra --}
 class (Functor f) => Run fl f where
@@ -87,7 +96,7 @@ instance Label l => Run l (ReadEffect l) where
 
 instance Label l => Run l (WriteEffect l) where
   runAlg (Guard l f) fl | fl `lrt` l = f fl
-                        | otherwise  = Nothing
+                          | otherwise          = Nothing
 
 instance Label l => Run l (Env l) where
   runAlg (Get f)   fl = f fl fl
@@ -136,8 +145,10 @@ lioSem (Return x) = return x
 lioSem (Bind m f) = lioSem m >>= lioSem . f
 lioSem (Unlabel (MkLabel l x)) = taint l >> return x
 lioSem (Label l x) = IFC.guard l >> return (MkLabel l x)
-lioSem (ToLbl l m) = do x <- local (lioSem m)  -- I do not like this freedom!
-                        lioSem (Label l x)
+-- I cannot return a value yet! I need to add labeled objects and then build the toLabeled based on 
+-- that. TODO! 
+-- lioSem (ToLbl l m) = local (lioSem m)  
+                     
                         
 -- Examples
 env1 :: [(Char, (Int, TP))]
@@ -166,6 +177,8 @@ runEx m = runIFC (lioSem m) L
 
 
 {-
+Denning-style encoding. Some details to work on. 
+
 type Name = Char
 type Env l = [(Name, (Int, l))] 
 
@@ -201,12 +214,7 @@ dsSem (If e c1 c2) env = local (lub (level e env)) $
           do if eval e env /= 0
                 then dsSem c1 env
                 else dsSem c2 env
--}
 
---lioCPS (Assign x v) = setEnv x v
-
-
-{-
 ex1 = If (Var 'h') (Assgn 'h' (Con 5))
                    (Assgn 'h' (Con 9))
   
