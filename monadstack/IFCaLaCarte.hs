@@ -25,15 +25,16 @@ instance Label l => Monoid l where
   mappend = lub  
                        
 
-{- Addition of labeled objects: TODO 
-data LObj l o = LObj { object :: o, 
-                       label :: l }
+data LValue l o = LValue { val :: o, 
+                           label :: l }
 
-class Bless o m where 
-  blessR :: (o -> m a) -> LObj l o -> IFC l a 
-  blessW :: (o -> m a) -> LObj l o -> IFC l a 
-  bless ::  (o -> m a) -> LObj l o -> IFC l a 
--}
+class MonadIO m => Bless v m where 
+  blessR ::  (v -> m a) -> LValue l v -> IFC l a 
+  blessW ::  (v -> m a) -> LValue l v -> IFC l a 
+  bless  ::  (v -> m a) -> LValue l v -> IFC l a 
+
+
+
 
 {-- Functors representing effects --}
 
@@ -56,7 +57,15 @@ data Env s a where
 instance Functor (Env l) where  
   fmap f (Get g) = Get (f . g)
   fmap f (Put s a) = Put s (f a) 
+
+data Effect = R | W | RW
   
+data SafeIOEffects l a where 
+  Bless :: Effect -> (v -> IO a) -> LValue l v -> SafeIOEffects l a
+
+instance Functor (SafeIOEffects l) where
+  fmap f (Bless op g lobj) = Bless op (fmap (fmap f) g) lobj 
+
 
 {-- Data types à la carte --}
   
@@ -75,28 +84,30 @@ ask = inject (Get Pure)
 put :: (Env s :<: f) => s -> Free f ()
 put s = inject (Put s (Pure ()))
 
+
+
 {-- IFC monad cares about writing and reading effects as well as 
     scope, i.e, environments --}
-type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l) a
+type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l :+: SafeIOEffects l) a
 
 -- {-- Definition of "local" --}
 local :: forall l a . Label l => IFC l () -> IFC l ()
 local m =
   do (s :: l) <- IFC.ask
-     x <- m
+     m
      IFC.put s
      return ()
 
 {-- Execution algebra --}
 class (Functor f) => Run fl f where
-  runAlg :: f (fl -> Maybe (a, fl)) -> fl -> Maybe (a,fl)
+  runAlg :: f (fl -> IO (a, fl)) -> fl -> IO (a,fl)
 
 instance Label l => Run l (ReadEffect l) where
   runAlg (Taint l f) fl = f (fl `lub` l)
 
 instance Label l => Run l (WriteEffect l) where
   runAlg (Guard l f) fl | fl `lrt` l = f fl
-                          | otherwise          = Nothing
+                        | otherwise  = error "IFC violation!"
 
 instance Label l => Run l (Env l) where
   runAlg (Get f)   fl = f fl fl
@@ -106,8 +117,8 @@ instance (Run fl f, Run fl g) => Run fl (f :+: g) where
   runAlg (Inl x) = runAlg x
   runAlg (Inr x) = runAlg x
   
-runIFC :: Run l f => Free f a -> l -> Maybe (a, l)
-runIFC = foldFree (\x fl -> Just (x,fl)) runAlg
+--runIFC :: Run l f => Free f a -> l -> IO (a, l)
+--runIFC = foldFree (\x fl -> return (x,fl)) runAlg
 
 
 {-- Translations --}
@@ -172,8 +183,8 @@ exLIO4 = do ToLbl H $ Unlabel (MkLabel H 2)
             Label L 1
               
               
-runEx :: LIO TP a -> Maybe (a, TP)
-runEx m = runIFC (lioSem m) L
+--runEx :: LIO TP a -> IO (a, TP)
+--runEx m = runIFC (lioSem m) L
 
 
 {-
