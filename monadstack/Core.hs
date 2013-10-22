@@ -1,19 +1,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, MultiParamTypeClasses, FlexibleInstances, UndecidableInstances, TypeOperators, FlexibleContexts #-}
-module IFC where
-
-import Data.Maybe 
-import Data.IORef
+module Core where
 
 import AlaCarte
 import Control.Monad.Free 
---import Control.Monad.Reader
-import Control.Monad.Cont 
-import Control.Monad.Trans
-import Control.Monad.State 
-import Control.Monad.Writer   
-import Control.Arrow
+import Data.Monoid
 
 class Label l where
   bottom :: l
@@ -25,50 +17,6 @@ instance Label l => Monoid l where
   mempty = bottom
   mappend = lub  
                        
-data FS
-data FI
-
---data LValue fs l v = LValue { labelOfTCB :: l, value :: v }
-data LValue fs l v = LValue (IORef (l,v))
-
-class Labelled t where
-  labelOf :: Label l => t l v -> IFC l l
-  enforce :: Label l => Effect -> t l v -> l -> IFC l ()
-  
-instance Labelled (LValue FS) where
-  labelOf (LValue r) = do (l,_) <-  IFC.liftIO (readIORef r)
-                          taint l
-                          return l
-  enforce R _ = taint
-  enforce W (LValue r) = \_ -> do pc <- IFC.ask
-                                  IFC.liftIO (modifyIORef r (\(_,v) -> (pc,v)))
-
-instance Labelled (LValue FI) where
-  labelOf (LValue r) = fmap fst $ IFC.liftIO $ readIORef r
-  enforce R _ = taint
-  enforce W _ = IFC.guard
-  
-{- Definition of bless -}
-
-bless :: (Label l, Labelled (LValue fs))
-      => Effect -> (v -> IO a) -> LValue fs l v -> IFC l a  
-bless R  = checks [R]
-bless W  = checks [W]
-bless RW = checks [W,R]
-
-checks :: (Label l, Labelled (LValue fs))
-          => [Effect] -> (v -> IO a) -> LValue fs l v -> IFC l a
-checks es f lv@(LValue r) = do (l,v) <- IFC.liftIO (readIORef r)
-                               sequence_ (map (\e -> enforce e lv l) es)
-                               IFC.liftIO (f v)
-
--- class MonadIO m => Bless v m where 
---   blessR ::  (v -> m a) -> LValue l v -> IFC l a 
---   blessW ::  (v -> m a) -> LValue l v -> IFC l a 
---   bless  ::  (v -> m a) -> LValue l v -> IFC l a 
-
-
-
 
 {-- Functors representing effects --}
 
@@ -91,8 +39,6 @@ data Env s a where
 instance Functor (Env l) where  
   fmap f (Get g) = Get (f . g)
   fmap f (Put s a) = Put s (f a) 
-
-data Effect = R | W | RW
   
 data IOEffect a where 
   LiftIO :: IO a -> IOEffect a
@@ -132,9 +78,9 @@ type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l :+: IOEffect) a
 -- {-- Definition of "local" --}
 local :: forall l a . Label l => IFC l () -> IFC l ()
 local m =
-  do (s :: l) <- IFC.ask
+  do (s :: l) <- Core.ask
      m
-     IFC.put s
+     Core.put s
      return ()
 
 {-- Execution algebra --}
@@ -175,7 +121,7 @@ instance Label TP where
   lrt H L = False
   lrt _ _ = True
 
-
+{-
 {-- Simplified LIO to IFC --}
 data Labeled l a = MkLabel l a
      deriving (Eq, Ord, Show)
@@ -197,7 +143,7 @@ lioSem :: forall l a. Label l => LIO l a -> IFC l a
 lioSem (Return x) = return x
 lioSem (Bind m f) = lioSem m >>= lioSem . f
 lioSem (Unlabel (MkLabel l x)) = taint l >> return x
-lioSem (Label l x) = IFC.guard l >> return (MkLabel l x)
+lioSem (Label l x) = Core.guard l >> return (MkLabel l x)
 -- I cannot return a value yet! I need to add labeled objects and then build the toLabeled based on 
 -- that. TODO! 
 -- lioSem (ToLbl l m) = local (lioSem m)  
@@ -286,3 +232,4 @@ ex3 = Seq ex1 (Assgn 'l' (Con 1))
 --             * taint para current label is not the same 
 --               as for references. References do not do the 
 --               join.
+-}
