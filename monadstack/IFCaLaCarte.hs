@@ -4,6 +4,7 @@
 module IFC where
 
 import Data.Maybe 
+import Data.IORef
 
 import AlaCarte
 import Control.Monad.Free 
@@ -24,12 +25,45 @@ instance Label l => Monoid l where
   mempty = bottom
   mappend = lub  
                        
+data FS
+data FI
 
-data LValue l v = LValue { labelOfTCB :: l, value :: v }
+--data LValue fs l v = LValue { labelOfTCB :: l, value :: v }
+data LValue fs l v = LValue (IORef (l,v))
 
 class Labelled t where
-  labelOf :: t  -> IFC l l
+  labelOf :: Label l => t l v -> IFC l l
+  bless :: (Label l)
+         => Effect -> (v -> IO a) -> t l v -> IFC l a
 
+{- Definition of bless -}
+
+instance Labelled (LValue FS) where
+  labelOf (LValue r) = do (l,_) <-  IFC.liftIO (readIORef r)
+                          taint l
+                          return l                          
+  
+  bless R f lv            = checks [R] f lv
+  bless W f lv@(LValue r) = do pc <- IFC.ask
+                               checks [] (g pc) lv
+                                 where g pc v = writeIORef r (pc,v) >> f v
+  bless RW f lv@(LValue r) = do pc <- IFC.ask
+                                checks [R] (g pc) lv
+                                 where g pc v = writeIORef r (pc,v) >> f v
+                                
+
+instance Labelled (LValue FI) where
+  labelOf (LValue r) = fmap fst $ IFC.liftIO $ readIORef r
+  bless R  = checks [R]
+  bless W  = checks [W]
+  bless RW = checks [W,R]
+
+checks :: [Effect] -> (v -> IO a) -> LValue fs l v -> IFC l a
+checks es f (LValue r) = let g R = taint 
+                             g W = IFC.guard
+                         in do (l,v) <- IFC.liftIO (readIORef r)
+                               sequence_ (map (($l).g) es)
+                               IFC.liftIO (f v)
 
 -- class MonadIO m => Bless v m where 
 --   blessR ::  (v -> m a) -> LValue l v -> IFC l a 
@@ -105,14 +139,6 @@ local m =
      m
      IFC.put s
      return ()
-
-{- Definition of bless -}
-
-bless :: Label l
-         => Effect -> (v -> IO a) -> LValue l v -> IFC l a
-bless R f (LValue l v) = taint l >> IFC.liftIO (f v)
-bless W f (LValue l v) = IFC.guard l >> IFC.liftIO (f v)
-bless RW f (LValue l v) = IFC.guard l >> taint l >> IFC.liftIO (f v)
 
 {-- Execution algebra --}
 class (Functor f) => Run fl f where
