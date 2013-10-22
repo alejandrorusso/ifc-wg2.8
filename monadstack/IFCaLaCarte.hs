@@ -25,13 +25,16 @@ instance Label l => Monoid l where
   mappend = lub  
                        
 
-data LValue l o = LValue { val :: o, 
-                           label :: l }
+data LValue l v = LValue { labelOfTCB :: l, value :: v }
 
-class MonadIO m => Bless v m where 
-  blessR ::  (v -> m a) -> LValue l v -> IFC l a 
-  blessW ::  (v -> m a) -> LValue l v -> IFC l a 
-  bless  ::  (v -> m a) -> LValue l v -> IFC l a 
+class Labelled t where
+  labelOf :: t  -> IFC l l
+
+
+-- class MonadIO m => Bless v m where 
+--   blessR ::  (v -> m a) -> LValue l v -> IFC l a 
+--   blessW ::  (v -> m a) -> LValue l v -> IFC l a 
+--   bless  ::  (v -> m a) -> LValue l v -> IFC l a 
 
 
 
@@ -60,11 +63,11 @@ instance Functor (Env l) where
 
 data Effect = R | W | RW
   
-data SafeIOEffects l a where 
-  Bless :: Effect -> (v -> IO a) -> LValue l v -> SafeIOEffects l a
+data IOEffect a where 
+  LiftIO :: IO a -> IOEffect a
 
-instance Functor (SafeIOEffects l) where
-  fmap f (Bless op g lobj) = Bless op (fmap (fmap f) g) lobj 
+instance Functor IOEffect where
+  fmap f (LiftIO m) = LiftIO (fmap f m)
 
 
 {-- Data types à la carte --}
@@ -84,11 +87,16 @@ ask = inject (Get Pure)
 put :: (Env s :<: f) => s -> Free f ()
 put s = inject (Put s (Pure ()))
 
+liftIO :: (IOEffect :<: f) => IO a -> Free f a 
+liftIO m = inject (LiftIO (fmap Pure m))
 
+-- bless :: ((SafeIOEffects l :+: ReadEffect l :+: WriteEffect l) :<: f)
+--          => Effect -> (v -> IO a) -> LValue l v -> Free f a
+-- bless e g lv = inject (Bless e (fmap Pure . g) lv)
 
 {-- IFC monad cares about writing and reading effects as well as 
     scope, i.e, environments --}
-type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l :+: SafeIOEffects l) a
+type IFC l a = Free (WriteEffect l :+: ReadEffect l :+: Env l :+: IOEffect) a
 
 -- {-- Definition of "local" --}
 local :: forall l a . Label l => IFC l () -> IFC l ()
@@ -97,6 +105,14 @@ local m =
      m
      IFC.put s
      return ()
+
+{- Definition of bless -}
+
+bless :: Label l
+         => Effect -> (v -> IO a) -> LValue l v -> IFC l a
+bless R f (LValue l v) = taint l >> IFC.liftIO (f v)
+bless W f (LValue l v) = IFC.guard l >> IFC.liftIO (f v)
+bless RW f (LValue l v) = IFC.guard l >> taint l >> IFC.liftIO (f v)
 
 {-- Execution algebra --}
 class (Functor f) => Run fl f where
@@ -107,7 +123,7 @@ instance Label l => Run l (ReadEffect l) where
 
 instance Label l => Run l (WriteEffect l) where
   runAlg (Guard l f) fl | fl `lrt` l = f fl
-                        | otherwise  = error "IFC violation!"
+                        | otherwise  = fail "IFC violation!"
 
 instance Label l => Run l (Env l) where
   runAlg (Get f)   fl = f fl fl
@@ -116,7 +132,10 @@ instance Label l => Run l (Env l) where
 instance (Run fl f, Run fl g) => Run fl (f :+: g) where
   runAlg (Inl x) = runAlg x
   runAlg (Inr x) = runAlg x
-  
+
+instance Run fl IOEffect where
+  runAlg (LiftIO m) fl = m >>= ($ fl)
+
 --runIFC :: Run l f => Free f a -> l -> IO (a, l)
 --runIFC = foldFree (\x fl -> return (x,fl)) runAlg
 
