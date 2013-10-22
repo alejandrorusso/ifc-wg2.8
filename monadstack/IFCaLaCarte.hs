@@ -33,36 +33,33 @@ data LValue fs l v = LValue (IORef (l,v))
 
 class Labelled t where
   labelOf :: Label l => t l v -> IFC l l
-  bless :: (Label l)
-         => Effect -> (v -> IO a) -> t l v -> IFC l a
-
-{- Definition of bless -}
-
+  enforce :: Label l => Effect -> t l v -> l -> IFC l ()
+  
 instance Labelled (LValue FS) where
   labelOf (LValue r) = do (l,_) <-  IFC.liftIO (readIORef r)
                           taint l
-                          return l                          
-  
-  bless R f lv            = checks [R] f lv
-  bless W f lv@(LValue r) = do pc <- IFC.ask
-                               checks [] (g pc) lv
-                                 where g pc v = writeIORef r (pc,v) >> f v
-  bless RW f lv@(LValue r) = do pc <- IFC.ask
-                                checks [R] (g pc) lv
-                                 where g pc v = writeIORef r (pc,v) >> f v
-                                
+                          return l
+  enforce R _ = taint
+  enforce W (LValue r) = \_ -> do pc <- IFC.ask
+                                  IFC.liftIO (modifyIORef r (\(_,v) -> (pc,v)))
 
 instance Labelled (LValue FI) where
   labelOf (LValue r) = fmap fst $ IFC.liftIO $ readIORef r
-  bless R  = checks [R]
-  bless W  = checks [W]
-  bless RW = checks [W,R]
+  enforce R _ = taint
+  enforce W _ = IFC.guard
+  
+{- Definition of bless -}
 
-checks :: [Effect] -> (v -> IO a) -> LValue fs l v -> IFC l a
-checks es f (LValue r) = let g R = taint 
-                             g W = IFC.guard
-                         in do (l,v) <- IFC.liftIO (readIORef r)
-                               sequence_ (map (($l).g) es)
+bless :: (Label l, Labelled (LValue fs))
+      => Effect -> (v -> IO a) -> LValue fs l v -> IFC l a  
+bless R  = checks [R]
+bless W  = checks [W]
+bless RW = checks [W,R]
+
+checks :: (Label l, Labelled (LValue fs))
+          => [Effect] -> (v -> IO a) -> LValue fs l v -> IFC l a
+checks es f lv@(LValue r) = do (l,v) <- IFC.liftIO (readIORef r)
+                               sequence_ (map (\e -> enforce e lv l) es)
                                IFC.liftIO (f v)
 
 -- class MonadIO m => Bless v m where 
