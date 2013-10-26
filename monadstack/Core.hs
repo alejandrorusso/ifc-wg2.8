@@ -23,8 +23,8 @@ data IFC l a where
   Return :: a -> IFC l a
   Taint  :: l -> IFC l a -> IFC l a 
   Guard  :: l -> IFC l a -> IFC l a   
-  Get    :: (l -> IFC l a) -> IFC l a
-  Put    :: l -> IFC l a -> IFC l a 
+  Ask    :: (l -> IFC l a) -> IFC l a
+  Local  :: IFC l () -> IFC l a -> IFC l a
   LiftIO :: IO a -> (a -> IFC l b) -> IFC l b   -- Here, I need the binding explicitly. mmmm 
 
 {-- IFC is a monad --}
@@ -33,17 +33,17 @@ instance Monad (IFC l) where
   Return a    >>= f = f a
   Taint l m   >>= f = Taint l (m >>= f) 
   Guard l m   >>= f = Guard l (m >>= f)
-  Get g       >>= f = Get (fmap (>>=f) g)
-  Put l m     >>= f = Put l (m >>= f)
+  Ask g       >>= f = Ask (fmap (>>=f) g)         -- Needed only for FS values. 
+  Local m m'  >>= f = Local m (m' >>= f)
   LiftIO io g >>= f = LiftIO io (fmap (>>=f) g)
 
 {-- Instance as a Functor for IFC. This is used in LValue module --}
 instance Functor (IFC l) where
-  fmap f (Return x)  = Return (f x)
-  fmap f (Taint l m) = Taint l (fmap f m) 
-  fmap f (Guard l m) = Guard l (fmap f m)
-  fmap f (Get g)     = Get (fmap (fmap f) g)
-  fmap f (Put l m)   = Put l (fmap f m)
+  fmap f (Return x)    = Return (f x)
+  fmap f (Taint l m)   = Taint l (fmap f m) 
+  fmap f (Guard l m)   = Guard l (fmap f m)
+  fmap f (Ask g)       = Ask (fmap (fmap f) g)
+  fmap f (Local m m')  = Local m (fmap f m') 
   fmap f (LiftIO io g) = LiftIO io (fmap (fmap f) g)
 
 
@@ -53,23 +53,15 @@ taint l = Taint l $ return ()
 guard :: l -> IFC l () 
 guard l = Guard l $ return ()
 
-ask ::  IFC l l 
-ask = Get return 
-
-put :: l -> IFC l () 
-put l = Put l $ return ()
+ask :: IFC l l 
+ask = Ask return 
 
 liftIO :: IO a -> IFC l a
 liftIO m = LiftIO m return 
 
 -- {-- Definition of "local" --}
 local :: forall l a . Label l => IFC l () -> IFC l ()
-local m =
-  do (s :: l) <- Core.ask
-     m
-     Core.put s
-     return ()
-
+local m = Local m $ return () 
 
 interIFC :: Label l => IFC l a -> StateT l IO a
 interIFC (Return x)    = return x           
@@ -79,10 +71,10 @@ interIFC (Taint l m)   = do fl <- ST.get
 interIFC (Guard l m)   = do fl <- ST.get
                             when (not (fl `lrt` l)) $ fail "IFC violation!" 
                             interIFC m
-interIFC (Get f)       = do fl <- ST.get
-                            interIFC $ f fl
-interIFC (Put l m)     = do ST.put l
-                            interIFC m 
+interIFC (Local m m')  = do fl <- ST.get
+                            interIFC m
+                            ST.put fl 
+                            interIFC m'
 interIFC (LiftIO io f) = do a <- ST.liftIO io
                             interIFC (f a)
 
