@@ -85,12 +85,22 @@ class Lattice l => Priv p l where
 -- Floating label is monotonic when ignored the first argument of Local!
 withPrivileges :: Priv p l => p -> IFC l a -> IFC l a 
 withPrivileges p m@(Return x)  = m
-withPrivileges p (Taint l m)   = Taint (rewrite p l) $ withPrivileges p m
-withPrivileges p (Guard l m)   = Guard l $ withPrivileges p m  -- Do not change the label of the object
-withPrivileges p (Ask f)       = Ask $ withPrivileges p . f . rewrite p  
-withPrivileges p (Local m m')  = Local (withPrivileges p m) (withPrivileges p m') -- Check this  
-withPrivileges p (LiftIO io f) = LiftIO io $ fmap (withPrivileges p) f 
+withPrivileges p (Taint l m)   = taint (rewrite p l) >> withPrivileges p m
+withPrivileges p (Guard l m)   = Core.guard l >> withPrivileges p m  -- Do not change the label of the object
+withPrivileges p (Ask f)       = ask >>= (withPrivileges p . f . rewrite p)   
+withPrivileges p (Local m m')  = local (withPrivileges p m) >> withPrivileges p m' -- Check this  
+withPrivileges p (LiftIO io f) = Core.liftIO io >>= fmap (withPrivileges p) f    
 
+-- Lower the cleareance?
+-- What about a GuardClr and the we can write withCleareance and lowerClr?
+withCleareance :: Lattice l => l -> IFC l a -> IFC l a 
+withCleareance c m@(Return x)  = m
+withCleareance c (Taint l m)   = taint l >> Core.guard c >> withCleareance c m
+withCleareance c (Guard l m)   = Core.guard l >> withCleareance c m
+withCleareance c (Ask f)       = ask >>= fmap (withCleareance c) f
+withCleareance c (Local m m')  = local (withCleareance c m) >> withCleareance c m'
+withCleareance c (LiftIO io f) = Core.liftIO io >>= fmap (withCleareance c) f
+                                
 
 {-- Interpretation of IFC into the State monad.
     We could perhaps interpret it into the reader monad pasing 
