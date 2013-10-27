@@ -1,24 +1,30 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving, MultiParamTypeClasses, FlexibleInstances, UndecidableInstances, TypeOperators, FlexibleContexts #-}
-module Core where
+{-# LANGUAGE GADTs, MultiParamTypeClasses #-}
+module Core 
+       
+       (
+        -- Lattice   
+        Lattice (bottom, top, lub, lrt), 
+        -- IFC Monad and operations
+        IFC (),
+        taint, 
+        Core.guard,
+        ask,
+        local,
+        Core.liftIO,
+        -- Privileges
+        Priv (rewrite),
+        withPrivileges,
+       )  
+ 
+where
 
-import AlaCarte
-import Control.Monad.Free 
-import Data.Monoid
 import Control.Monad.State as ST
 
-class Label l where
+class Lattice l where
   bottom :: l
   top :: l
   lub :: l -> l -> l
   lrt :: l -> l -> Bool
-  with :: l -> l -> l  
-
-instance Label l => Monoid l where
-  mempty = bottom
-  mappend = lub  
-                       
 
 data IFC l a where 
   Return :: a -> IFC l a
@@ -61,64 +67,57 @@ liftIO :: IO a -> IFC l a
 liftIO m = LiftIO m return 
 
 {-- Definition of "local" --}
-local :: forall l a . Label l => IFC l () -> IFC l ()
+local :: Lattice l => IFC l () -> IFC l ()
 local m = Local m $ return () 
 
-{-- Priviligies (Core, not exported) 
 
-This privileges is very general. Most of LIO only uses 
-privileges for operations which are lifted. In our case, it will be 
-for LiftIO. I like that withPrivileges only modifies taint and guard 
-and it is defined homorphically for the rest. 
+{-- Priviligies  
 
-Having said that, does it make sense for Local?
+This privileges is very general. Most of LIO only uses privileges for operations
+which are lifted. In our case, it will be for LiftIO. withPrivileges only
+modifies taint and when the floating label is observed (Ask). For the rest, it
+is homorphically defined.
+
 --}
+class Lattice l => Priv p l where
+  rewrite :: p -> l -> l 
 
-withPrivileges :: Label l => l -> IFC l a -> IFC l a 
+-- Floating label is monotonic when ignored the first argument of Local!
+withPrivileges :: Priv p l => p -> IFC l a -> IFC l a 
 withPrivileges p m@(Return x)  = m
-withPrivileges p (Taint l m)   = Taint (with p l) $ withPrivileges p m
-withPrivileges p (Guard l m)   = Guard (with p l) $ withPrivileges p m
-withPrivileges p (Ask f)       = Ask (fmap (withPrivileges p) f)  
-withPrivileges p (Local m m')  = Local (withPrivileges p m) (withPrivileges p m')   
-withPrivileges p (LiftIO io f) = LiftIO io (fmap (withPrivileges p) f) 
+withPrivileges p (Taint l m)   = Taint (rewrite p l) $ withPrivileges p m
+withPrivileges p (Guard l m)   = Guard l $ withPrivileges p m  -- Do not change the label of the object
+withPrivileges p (Ask f)       = Ask $ withPrivileges p . f . rewrite p  
+withPrivileges p (Local m m')  = Local (withPrivileges p m) (withPrivileges p m') -- Check this  
+withPrivileges p (LiftIO io f) = LiftIO io $ fmap (withPrivileges p) f 
 
 
 {-- Interpretation of IFC into the State monad.
     We could perhaps interpret it into the reader monad pasing 
     a single reference as it is LIO implemented now
 --}
-interIFC :: Label l => IFC l a -> StateT l IO a
-interIFC (Return x)    = return x           
-interIFC (Taint l m)   = do fl <- ST.get
-                            ST.put (fl `lub` l) 
-                            interIFC m
-interIFC (Guard l m)   = do fl <- ST.get
-                            when (not (fl `lrt` l)) $ fail "IFC violation!" 
-                            interIFC m
-interIFC (Local m m')  = do fl <- ST.get
-                            interIFC m
-                            ST.put fl 
-                            interIFC m'
-interIFC (LiftIO io f) = do a <- ST.liftIO io
-                            interIFC (f a)
+interpIFC :: Lattice l => IFC l a -> StateT l IO a
+interpIFC (Return x)    = return x           
+interpIFC (Ask f)       = do fl <- ST.get                              
+                             interpIFC (f fl)
+interpIFC (Taint l m)   = do fl <- ST.get  
+                             ST.put (fl `lub` l) 
+                             interpIFC m
+interpIFC (Guard l m)   = do fl <- ST.get 
+                             when (not (fl `lrt` l)) $ fail "IFC violation!" 
+                             interpIFC m
+interpIFC (Local m m')  = do fl <- ST.get
+                             ST.liftIO $ runIFC m fl -- Here, it is implemented as an environment. So, there is only a put
+                                                     -- in the interpretation. Easy to see monotonicity
+                             interpIFC m'
+interpIFC (LiftIO io f) = do a <- ST.liftIO io
+                             interpIFC (f a)
 
-runIFC :: Label l => IFC l a -> IO (a,l)
-runIFC m = runStateT (interIFC m) bottom
+
+runIFC :: Lattice l => IFC l a -> l -> IO (a,l)
+runIFC m = runStateT (interpIFC m) 
 
 
-{-- Translations --}
-data TP = L | H
-        deriving (Eq, Ord, Show)
-
-instance Label TP where
-  bottom = L
-  top = H
-  lub L L = L
-  lub _ _ = H
-  lrt H L = False
-  lrt _ _ = True
-  with H _ = L
-  with _ l = l 
 {-
 --            Propiedades: monotonia del pc (taint)            
 --             * no-write down: no side-effects below pc (guard)
