@@ -13,6 +13,7 @@ class Label l where
   top :: l
   lub :: l -> l -> l
   lrt :: l -> l -> Bool
+  with :: l -> l -> l  
 
 instance Label l => Monoid l where
   mempty = bottom
@@ -59,10 +60,33 @@ ask = Ask return
 liftIO :: IO a -> IFC l a
 liftIO m = LiftIO m return 
 
--- {-- Definition of "local" --}
+{-- Definition of "local" --}
 local :: forall l a . Label l => IFC l () -> IFC l ()
 local m = Local m $ return () 
 
+{-- Priviligies (Core, not exported) 
+
+This privileges is very general. Most of LIO only uses 
+privileges for operations which are lifted. In our case, it will be 
+for LiftIO. I like that withPrivileges only modifies taint and guard 
+and it is defined homorphically for the rest. 
+
+Having said that, does it make sense for Local?
+--}
+
+withPrivileges :: Label l => l -> IFC l a -> IFC l a 
+withPrivileges p m@(Return x)  = m
+withPrivileges p (Taint l m)   = Taint (with p l) $ withPrivileges p m
+withPrivileges p (Guard l m)   = Guard (with p l) $ withPrivileges p m
+withPrivileges p (Ask f)       = Ask (fmap (withPrivileges p) f)  
+withPrivileges p (Local m m')  = Local (withPrivileges p m) (withPrivileges p m')   
+withPrivileges p (LiftIO io f) = LiftIO io (fmap (withPrivileges p) f) 
+
+
+{-- Interpretation of IFC into the State monad.
+    We could perhaps interpret it into the reader monad pasing 
+    a single reference as it is LIO implemented now
+--}
 interIFC :: Label l => IFC l a -> StateT l IO a
 interIFC (Return x)    = return x           
 interIFC (Taint l m)   = do fl <- ST.get
@@ -93,7 +117,8 @@ instance Label TP where
   lub _ _ = H
   lrt H L = False
   lrt _ _ = True
-
+  with H _ = L
+  with _ l = l 
 {-
 --            Propiedades: monotonia del pc (taint)            
 --             * no-write down: no side-effects below pc (guard)
