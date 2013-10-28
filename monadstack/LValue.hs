@@ -27,7 +27,7 @@ instance Labelled (LValue FS) where
                           taint l
                           return l
   enforce lv R = labelOf lv >> return ()
-  enforce (LValue r) W = do pc <- Core.ask
+  enforce (LValue r) W = do pc <- Core.ask    
                             Core.liftIO (modifyIORef r (\(_,v) -> (pc,v)))
 
 instance Labelled (LValue FI) where
@@ -36,7 +36,6 @@ instance Labelled (LValue FI) where
   enforce lv W = labelOf lv >>= Core.guard
   
 {- Definition of bless -}
-
 bless :: (Lattice l, Labelled (LValue fs))
       => Effect -> (v -> IO a) -> LValue fs l v -> IFC l a  
 bless R  = secureLift [R]
